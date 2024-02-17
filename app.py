@@ -24,7 +24,9 @@ from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_core.runnables import RunnablePassthrough
 from langgraph.graph import END, StateGraph
 
-run_local = "No"
+run_local = "Yes"
+run_websearch = "No"
+maximum_quary_attempt = 3
 # Embed and index
 if run_local == "Yes":
     embedding = GPT4AllEmbeddings()
@@ -56,7 +58,8 @@ else:
         embedding=embedding,
         persist_directory="./knowledge_base",
     )
-retriever = vectorstore.as_retriever()
+retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+retriever
 class GraphState(TypedDict):
     """
     Represents the state of our graph.
@@ -84,8 +87,10 @@ def retrieve(state):
     state_dict = state["keys"]
     question = state_dict["question"]
     local = state_dict["local"]
+    quary_attempts = state_dict["quary_attempts"]
     documents = retriever.get_relevant_documents(question)
-    return {"keys": {"documents": documents, "local": local, "question": question}}
+    quary_attempts += 1
+    return {"keys": {"documents": documents, "local": local, "question": question, "quary_attempts": quary_attempts}}
 
 
 def generate(state):
@@ -106,9 +111,10 @@ def generate(state):
 
     # Prompt
     custom_rag_template = """Use the following pieces of context to answer the question at the end.
-    If you don't know the answer, return "NO CLUE", don't try to make up an answer.
+    If you don't know the answer, say "I don't know", don't try to make up an answer.
     Use the output format that is asked of you in the question.
     Do not add any extra words, comments, notes, identifiers.
+    Do not start your response by "Sure, I'd be happy to help"
 
     {context}
 
@@ -118,7 +124,7 @@ def generate(state):
 
     # LLM
     if local == "Yes":
-        llm = ChatOpenAI(openai_api_base="http://127.0.0.1:8081", openai_api_key='na', model='Llama2')
+        llm = ChatOpenAI(openai_api_base="http://127.0.0.1:8081", openai_api_key='na', model='Llama2', temperature=0)
     else:
         llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 
@@ -156,10 +162,11 @@ def grade_documents(state):
     question = state_dict["question"]
     documents = state_dict["documents"]
     local = state_dict["local"]
+    quary_attempts = state_dict["quary_attempts"]
 
     # LLM
     if local == "Yes":
-        llm = ChatOpenAI(openai_api_base="http://127.0.0.1:8081", openai_api_key='na', model='Llama2')
+        llm = ChatOpenAI(openai_api_base="http://127.0.0.1:8081", openai_api_key='na', model='Llama2', temperature=0)
     else:
         llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 
@@ -172,35 +179,19 @@ def grade_documents(state):
     # Set up a parser + inject instructions into the prompt template.
     #parser = PydanticOutputParser(pydantic_object=grade)
 
-    from langchain_core.output_parsers import JsonOutputParser
+    #from langchain_core.output_parsers import JsonOutputParser
 
     #parser = JsonOutputParser(pydantic_object=grade)
 
     prompt = PromptTemplate(
         template="""You are a grader assessing relevance of a retrieved document to a user question. \n 
-        Here is an example:
-        [INST]Banks are very important institutions.[/INST]
-        Here is the retrieved document: \n\n {context} \n\n
-        Here is the user question: {question} \n
-        If the document contains keywords related to the user question, grade it as yes. \n
+        If the document is related to the user question, grade it as yes. \n
+        if the document is not related to the user question grade it as no. \n
         It does not need to be a stringent test. The goal is to filter out erroneous retrievals. \n
-        Only reply 'yes' or 'no'. Do not include any other words or phrases in your reply.\n
-        Here are some examples example:
-        \n
-        retrieved document: Banks are very important institutions.
-        \n
-        user question: what are banks?
-        \n
-        <s>Answer: yes </s>
-        \n
-        retrieved document: students are very studious.
-        \n
-        user question: what are banks?
-        \n
-        <s>Answer: no </s>\n
+        Only reply 'yes' or 'no'.\n
         retrieved document: \n\n {context} \n\n
         user question: {question} \n
-        Answer: 
+        Answer:
         """,
         input_variables=["query"],
         #partial_variables={"format_instructions": parser.get_format_instructions()},
@@ -229,8 +220,9 @@ def grade_documents(state):
             filtered_docs.append(d)
         else:
             print("---GRADE: DOCUMENT NOT RELEVANT---")
-            search = "Yes"  # Perform web search
             continue
+    if len(filtered_docs) < 2:
+        search = "Yes"  # improve quary
 
     return {
         "keys": {
@@ -238,6 +230,7 @@ def grade_documents(state):
             "question": question,
             "local": local,
             "run_web_search": search,
+            "quary_attempts": quary_attempts,
         }
     }
 
@@ -267,14 +260,15 @@ def transform_query(state):
         \n ------- \n
         {question} 
         \n ------- \n
-        Provide an improved question without any premable, only respond with the updated question. Do not include any other notes, comments etc. """,
+        Provide an improved question without any premable, only respond with the updated question. Do not include any other notes, comments etc.
+        Updated question:""",
         input_variables=["question"],
     )
 
     # Grader
     # LLM
     if local == "Yes":
-        llm = ChatOpenAI(openai_api_base="http://127.0.0.1:8081", openai_api_key='na', model='Llama2')
+        llm = ChatOpenAI(openai_api_base="http://127.0.0.1:8081", openai_api_key='na', model='Llama2', temperature=0)
     else:
         llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 
@@ -282,7 +276,7 @@ def transform_query(state):
     chain = prompt | llm | StrOutputParser()
     better_question = chain.invoke({"question": question})
 
-    #print(better_question)
+    print(better_question)
 
     return {
         "keys": {"documents": documents, "question": better_question, "local": local}
@@ -334,16 +328,29 @@ def decide_to_generate(state):
     question = state_dict["question"]
     filtered_documents = state_dict["documents"]
     search = state_dict["run_web_search"]
+    quary_attempts =state_dict["quary_attempts"]
 
-    if search == "Yes":
+    if search == "Yes" and quary_attempts < maximum_quary_attempt:
         # All documents have been filtered check_relevance
         # We will re-generate a new query
-        print("---DECISION: TRANSFORM QUERY and RUN WEB SEARCH---")
+        print("---DECISION: TRANSFORM QUERY--")
         return "transform_query"
     else:
         # We have relevant documents, so generate answer
         print("---DECISION: GENERATE---")
         return "generate"
+    
+def decide_to_search_web(state):
+    print("---DECIDE TO SEARCH Web or Generate---")
+    if run_websearch == "no":
+        # All documents have been filtered check_relevance
+        # We will re-generate a new query
+        print("---DECISION: RUN WEB SEARCH---")
+        return "transform_query"
+    else:
+        # We have relevant documents, so generate answer
+        print("---DECISION: GENERATE---")
+        return "web_search"
 
 workflow = StateGraph(GraphState)
 
@@ -365,7 +372,15 @@ workflow.add_conditional_edges(
         "generate": "generate",
     },
 )
-workflow.add_edge("transform_query", "web_search")
+#workflow.add_edge("transform_query", "web_search")
+workflow.add_conditional_edges(
+    "transform_query",
+    decide_to_search_web,
+    {
+        "web_search": "web_search",
+        "generate": "generate",
+    },
+)
 workflow.add_edge("web_search", "generate")
 workflow.add_edge("generate", END)
 
@@ -386,6 +401,7 @@ def generate_response(message, history):
         "keys": {
             "question": message,
             "local": run_local,
+            "quary_attempts": 0, 
         }
     }
 

@@ -23,12 +23,45 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_core.runnables import RunnablePassthrough
 from langgraph.graph import END, StateGraph
+import argparse
 
-run_local = "Yes"
-run_websearch = "No"
-maximum_quary_attempt = 3
+# Create the parser
+parser = argparse.ArgumentParser(description='Process input arguments.')
+
+# Add arguments
+parser.add_argument('--run_local', type=str, default='yes', choices=['yes', 'no'],
+                    help='Whether to run locally or openAI gpt_3.5 (the latter requires an API key to be set up in your environment) Accepts "yes" or "no". Default is "yes".')
+
+parser.add_argument('--local_url', type=str, default='http://127.0.0.1:8081',
+                    help='The local URL to use. Default is "http://127.0.0.1:8081" for NVIDIA OpenAI-like API.')
+
+parser.add_argument('--run_websearch', type=str, default='no', choices=['yes', 'no'],
+                    help='Whether to run websearch. Accepts "yes" or "no". Default is "no". If set to yes you must have a TavilySearch API key')
+
+parser.add_argument('--maximum_query_attempt', type=int, default=3,
+                    help='The maximum number of query attempts. Default is 3.')
+
+# Parse the arguments
+args = parser.parse_args()
+
+# Example usage of the parsed arguments
+print("---Starting the C-RAG with the following parameters---")
+print(f"Run Local: {args.run_local}")
+if args.run_local.lower() == "yes":
+    print(f"Local URL: {args.local_url}")
+else:
+    print(f"Local URL: Running an  open AI model")
+print(f"Run Websearch: {args.run_websearch}")
+print(f"Maximum Query Attempt: {args.maximum_query_attempt}")
+
+
+run_local = args.run_local
+run_websearch = args.run_websearch
+maximum_quary_attempt = args.maximum_query_attempt
+local_url = args.local_url
+
 # Embed and index
-if run_local == "Yes":
+if run_local.lower() == "yes":
     embedding = GPT4AllEmbeddings()
 else:
     embedding = GPT4AllEmbeddings()
@@ -123,8 +156,8 @@ def generate(state):
     Formatted response:"""
 
     # LLM
-    if local == "Yes":
-        llm = ChatOpenAI(openai_api_base="http://127.0.0.1:8081", openai_api_key='na', model='Llama2', temperature=0)
+    if local.lower() == "yes":
+        llm = ChatOpenAI(openai_api_base=local_url, openai_api_key='na', model='Llama2', temperature=0)
     else:
         llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 
@@ -165,8 +198,8 @@ def grade_documents(state):
     quary_attempts = state_dict["quary_attempts"]
 
     # LLM
-    if local == "Yes":
-        llm = ChatOpenAI(openai_api_base="http://127.0.0.1:8081", openai_api_key='na', model='Llama2', temperature=0)
+    if local.lower() == "yes":
+        llm = ChatOpenAI(openai_api_base=local_url, openai_api_key='na', model='Llama2', temperature=0)
     else:
         llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 
@@ -251,6 +284,7 @@ def transform_query(state):
     question = state_dict["question"]
     documents = state_dict["documents"]
     local = state_dict["local"]
+    quary_attempts = state_dict["quary_attempts"] 
 
     # Create a prompt template with format instructions and the query
     prompt = PromptTemplate(
@@ -267,8 +301,8 @@ def transform_query(state):
 
     # Grader
     # LLM
-    if local == "Yes":
-        llm = ChatOpenAI(openai_api_base="http://127.0.0.1:8081", openai_api_key='na', model='Llama2', temperature=0)
+    if local.lower() == "yes":
+        llm = ChatOpenAI(openai_api_base=local_url, openai_api_key='na', model='Llama2', temperature=0)
     else:
         llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 
@@ -279,7 +313,7 @@ def transform_query(state):
     print(better_question)
 
     return {
-        "keys": {"documents": documents, "question": better_question, "local": local}
+        "keys": {"documents": documents, "question": better_question, "local": local, "quary_attempts": quary_attempts}
     }
 
 
@@ -341,15 +375,14 @@ def decide_to_generate(state):
         return "generate"
     
 def decide_to_search_web(state):
-    print("---DECIDE TO SEARCH Web or Generate---")
-    if run_websearch == "no":
+    if run_websearch.lower() == "no":
         # All documents have been filtered check_relevance
         # We will re-generate a new query
-        print("---DECISION: RUN WEB SEARCH---")
-        return "transform_query"
+        print("---DECISION: TRANSFORM QUERY---")
+        return "retrieve"
     else:
         # We have relevant documents, so generate answer
-        print("---DECISION: GENERATE---")
+        print("---DECISION: SEARCH Web---")
         return "web_search"
 
 workflow = StateGraph(GraphState)
@@ -378,7 +411,7 @@ workflow.add_conditional_edges(
     decide_to_search_web,
     {
         "web_search": "web_search",
-        "generate": "generate",
+        "retrieve": "retrieve",
     },
 )
 workflow.add_edge("web_search", "generate")

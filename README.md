@@ -7,7 +7,7 @@ My project for NVIDIA challenge 2024 and runs on windows using NVIDIA tensorRT-L
 This repository is insprired by `langchains C-RAG` example and is specifically tested on US immigration laws, policies, and procedures. It aims to provide insights, answers, and guidance by leveraging advanced natural language processing techniques.
 The state machine for the C/self-RAG is depicted in the following figure.
 
-![C/self-RAG state-machine](https://github.com/sarashs/NVIDIA_contest_2024/state_machine.png "C/self-RAG state-machine")
+![C/self-RAG state-machine](state_machine.png "C/self-RAG state-machine")
 
 ## Prerequisites
 
@@ -42,7 +42,7 @@ python python app.py --run_local yes --local_url "local URL from OpenAI-like API
 ```
 - After running the above, a Gradio web app url should pop up and you can ask your immigration related questions (assuming that you are using the repository as is with the legal documents in the paper directory)
 
-![Screen shot of the chatbot in action](https://github.com/sarashs/NVIDIA_contest_2024/chat_bot_screenshot.png "Screen shot of the chatbot in action")
+![Screen shot of the chatbot in action](chat_bot_screenshot.png "Screen shot of the chatbot in action")
 
 - Note that the bot doesn't have a history as it might confuse the model (due to the limited quality of the llama2 model used)
 

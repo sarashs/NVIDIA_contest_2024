@@ -1,4 +1,4 @@
-# Windows based C-RAG Augmented with websearch
+# Windows based self/C-RAG Augmented with web search
 
 My project for NVIDIA challenge 2024 and runs on windows using NVIDIA tensorRT-LLM as well as NVIDIA and TensorRT-LLM as OpenAI API on Windows. 
 

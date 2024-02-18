@@ -144,9 +144,9 @@ def generate(state):
 
     # Prompt
     custom_rag_template = """Use the following pieces of context to answer the question at the end.
-    If you don't know the answer, say "I don't know", don't try to make up an answer.
+    If you don't know the answer, say "I don't know", don't try to make up an answer. Your answer must come from the context.
     Use the output format that is asked of you in the question.
-    Do not add any extra words, comments, notes, identifiers.
+    You answer must include information and explaination based on the given context.
     Do not start your response by "Sure, I'd be happy to help"
 
     {context}
